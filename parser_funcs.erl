@@ -3,7 +3,40 @@
 -import(string,[tokens/2,str/2,substr/2,substr/3,len/1,concat/2,to_integer/1,to_float/1]).
 -import(lists,[reverse/1]).
 -import(re,[split/3,run/2]).
--export([parse_string/1,parse_line/1]).
+-import(file,[open/2,close/1,pread/3]).
+-export([parse_string/1,parse_line/1,read_file/2,parse_message/0,parse_file/3]).
+
+parse_file(FileName,Start,End) when End-Start>1000000 ->
+	spawn(parser_funcs,read_file,[FileName,Start]),
+	parse_file(FileName,Start+1000000,End);
+parse_file(FileName,Start,End)->
+	spawn(parser_funcs,read_file,[FileName,Start]).
+
+read_file(FileName,LastPosition)->
+	{ok,File}=open(FileName,[read]),
+	{ok,Data}=pread(File,LastPosition,1000000),
+	DataStrings=split(Data,"\n",[{return,list}]),
+	StopAt=parse_data(FileName,0,DataStrings),
+	close(File),
+	StopAt.
+
+parse_data(FileName,LastPosition,[])->LastPosition;
+parse_data(FileName,LastPosition,[String|[]])->LastPosition;
+parse_data(FileName,LastPosition,[String|Strings])->
+%	io:format("String ~p ~n",[String]),
+%	io:format("LastPos: ~p ~n",[LastPosition]),
+%	parse_line(String),
+%	Pid = self(),
+%	Pid ! String,
+	Pid = spawn(parser_funcs,parse_message,[]),
+	Pid ! {log_string,String},
+	parse_data(FileName,LastPosition+len(String)+1,Strings).
+
+parse_message()->
+	receive
+		{log_string,String}->parse_line(String);
+		_Other -> {error}
+	end.
 
 parse_line(Str)->
 	PreParsed = parse_string(Str),
@@ -26,12 +59,12 @@ send_to_next(Parsed,[HUp|Upstream],[HUpTime|UpstreamTime],[HUpCode|UpstreamCode]
 		_ -> TimeT
 		end,
 	P1 = Parsed#parsed_line{upstream=HUp,upstreamtime=Time*1000,upstreamcode=Code,resptime=Parsed#parsed_line.resptime*1000},
-	io:format("~p ~n",[P1]),
+%	io:format("~p ~n",[P1]),
 	send_to_next(Parsed,Upstream,UpstreamTime,UpstreamCode).
 
 parse_string(Str)->
 	Items = split(concat(Str,"end"),"    ",[{return,list}]),
-	[Ip,User,DateTimeTZ,Method,Url,Version,CodeStr,SizeStr,Ref,Agent,RespTimeStr,UpstreamTime,Upstream,CacheStatus,UpstreamCode,MemcacheKey,EnhancedMemcacheKey,Backend,RespCompl,ContentType,RequestId,UidGot,UidSet,Farm,Country,Hz]=Items,
+	[Ip,User,DateTimeTZ,Method,Url,Version,CodeStr,SizeStr,Ref,Agent,RespTimeStr,UpstreamTime,Upstream,CacheStatus,UpstreamCode,MemcacheKey,EnhancedMemcacheKey,Backend,RespCompl,ContentType,RequestId,UidGot,UidSet,Farm,Country,RealIp,CdnClientIp,HttpIp,LiveIp,Hz]=Items,
 	{CodeT,_}=to_integer(CodeStr),
 	{SizeT,_}=to_integer(SizeStr),
 	{RespTimeT,_}=to_float(RespTimeStr),
@@ -92,6 +125,10 @@ parse_string(Str)->
 		uidset=UidSet,
 		farm=Farm,
 		country=Country,
+		realip=RealIp,
+		cdnclientip=CdnClientIp,
+		httpip=HttpIp,
+		liveip=LiveIp,
 		hz=Hz
 	}.
 
